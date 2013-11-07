@@ -102,7 +102,8 @@ LABEL=/srv        /srv             xfs          defaults           0 0
 LABEL=/home       /home            xfs          defaults           0 0
 LABEL=swap        none             swap         sw                 0 0
 
-none              /var/tmp/portage tmpfs        size=4096M,noatime 0 0
+none              /var/tmp/portage tmpfs        size=4096M,uid=250,gid=250,mode=755,noatime 0 0
+
 DATAEOF
 
 # Set makeconf
