@@ -12,7 +12,7 @@ stage3file=${stage3current##*/}
 chost="x86_64-pc-linux-gnu"
 
 # kernel version to use
-kernel_version="3.10.17"
+kernel_version="3.10.25"
 
 # timezone (as a subdirectory of /usr/share/zoneinfo)
 timezone="UTC"
@@ -38,14 +38,14 @@ function base() {
     # Set up lvms
     pvcreate -y /dev/sda2
     vgcreate vgsys /dev/sda2
-    lvcreate -l2G  -n lvroot vgsys
-    lvcreate -l5G  -n lvopt  vgsys
-    lvcreate -l20G -n lvusr  vgsys
-    lvcreate -l2G  -n lvtmp  vgsys
-    lvcreate -l2G  -n lvvar  vgsys
-    lvcreate -l1G  -n lvsrv  vgsys
-    lvcreate -l50G -n lvhome vgsys
-    lvcreate -l6G  -n lvswap vgsys
+    lvcreate -L2G  -n lvroot vgsys
+    lvcreate -L5G  -n lvopt  vgsys
+    lvcreate -L20G -n lvusr  vgsys
+    lvcreate -L2G  -n lvtmp  vgsys
+    lvcreate -L2G  -n lvvar  vgsys
+    lvcreate -L1G  -n lvsrv  vgsys
+    lvcreate -L50G -n lvhome vgsys
+    lvcreate -L6G  -n lvswap vgsys
 
     # Setup swap
     mkswap -L swap /dev/mapper/vgsys-lvswap
@@ -88,19 +88,9 @@ function base() {
 
     chroot "$chroot" env-update
 
-    # disable systemd device naming
+    # Set ssh to start on boot
     chroot "$chroot" /bin/bash <<DATAEOF
-touch /etc/udev/rules.d/80-net-name-slot.rules
-DATAEOF
-
-    # Set eth0 and ssh to start on boot
-    chroot "$chroot" /bin/bash <<DATAEOF
-pushd /etc/conf.d
-echo 'config_eth0=( "dhcp" )' >> net
-ln -s net.lo /etc/init.d/net.eth0
-rc-update add net.eth0 default
 rc-update add sshd default
-popd
 DATAEOF
 
     # Set fstab
