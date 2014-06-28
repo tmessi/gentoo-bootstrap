@@ -12,7 +12,7 @@ stage3file=${stage3current##*/}
 chost="x86_64-pc-linux-gnu"
 
 # kernel version to use
-kernel_version="3.10.25"
+kernel_version="3.12.21"
 
 # timezone (as a subdirectory of /usr/share/zoneinfo)
 timezone="UTC"
