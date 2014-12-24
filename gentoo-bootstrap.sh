@@ -12,7 +12,7 @@ stage3file=${stage3current##*/}
 chost="x86_64-pc-linux-gnu"
 
 # kernel version to use
-kernel_version="3.12.21"
+kernel_version="3.17.7"
 
 # timezone (as a subdirectory of /usr/share/zoneinfo)
 timezone="UTC"
@@ -28,16 +28,20 @@ nr_cpus=$(</proc/cpuinfo grep processor|wc -l)
 
 
 function base() {
+    # destroys the existing MBR and GTP data
+    # sgdisk -Z /dev/sda
+
     # Partition the disk (http://www.rodsbooks.com/gdisk/sgdisk.html)
-    sgdisk -n 1:0:+512M -t 1:8300 -c 1:"linux-boot" \
-           -n 2:0:0     -t 2:8300 -c 2:"linux-root" \
+    sgdisk -n 1:0:+2M   -t 1:ef02 -c 1:"linux-bios" \
+           -n 2:0:+512M -t 2:ef00 -c 2:"linux-boot" \
+           -n 3:0:0     -t 3:8e00 -c 3:"linux-root" \
            -p /dev/sda
 
     sleep 1
 
     # Set up lvms
-    pvcreate -y /dev/sda2
-    vgcreate vgsys /dev/sda2
+    pvcreate -y /dev/sda3
+    vgcreate vgsys /dev/sda3
     lvcreate -L2G  -n lvroot vgsys
     lvcreate -L5G  -n lvopt  vgsys
     lvcreate -L20G -n lvusr  vgsys
@@ -45,14 +49,14 @@ function base() {
     lvcreate -L2G  -n lvvar  vgsys
     lvcreate -L1G  -n lvsrv  vgsys
     lvcreate -L50G -n lvhome vgsys
-    lvcreate -L6G  -n lvswap vgsys
+    lvcreate -L4G  -n lvswap vgsys
 
     # Setup swap
     mkswap -L swap /dev/mapper/vgsys-lvswap
     swapon -L swap
 
     # Make file systems
-    mkfs.ext2 -L/boot /dev/sda1
+    mkfs.vfat -n/boot /dev/sda2
     mkfs.xfs  -L/     /dev/mapper/vgsys-lvroot
     mkfs.xfs  -L/opt  /dev/mapper/vgsys-lvopt
     mkfs.xfs  -L/usr  /dev/mapper/vgsys-lvusr
@@ -72,6 +76,9 @@ function base() {
     mount -L/srv  "$chroot/srv"
     mount -L/home "$chroot/home"
 
+    # Set proper perms for /tmp
+    chmod 1777 "$chroot/tmp"
+
     # Download and unpack stage3
     pushd "$chroot"
     wget -nv --tries=5 "$stage3url"
@@ -84,7 +91,9 @@ function base() {
     # Mount additional mount points
     mount -t proc none "$chroot/proc"
     mount --rbind /sys "$chroot/sys"
+    mount --make-rslave "$chroot/sys"
     mount --rbind /dev "$chroot/dev"
+    mount --make-rslave "$chroot/dev"
 
     chroot "$chroot" env-update
 
@@ -109,12 +118,12 @@ DATAEOF
 #
 
 # <fs>            <mountpoint>    <type>        <opts>            <dump/pass>
-LABEL=/boot       /boot            ext2         noatime            1 2
+LABEL=/boot       /boot            vfat         noatime            1 2
 LABEL=/           /                xfs          defaults           0 1
 LABEL=/opt        /opt             xfs          defaults           0 0
 LABEL=/usr        /usr             xfs          defaults           0 0
-LABEL=/tmp        /tmp             xfs          defaults           0 0
-LABEL=/var        /var             xfs          defaults           0 0
+LABEL=/tmp        /tmp             xfs          defaults,noatime   0 0
+LABEL=/var        /var             xfs          defaults,noatime   0 0
 LABEL=/srv        /srv             xfs          defaults           0 0
 LABEL=/home       /home            xfs          defaults           0 0
 LABEL=swap        none             swap         sw                 0 0
@@ -144,11 +153,9 @@ LINGUAS="en"
 
 FEATURES="parallel-fetch parallel-install candy"
 
-# Set PORTDIR for backward compatibility with various tools:
-#   gentoo-bashcomp - bug #478444
-#   euse - bug #474574
-#   euses and ufed - bug #478318
 PORTDIR="/usr/portage"
+DISTDIR="$\{PORTDIR\}/distfiles"
+PKGDIR="$\{PORTDIR\}/packages"
 DATAEOF
 
     # set localtime
