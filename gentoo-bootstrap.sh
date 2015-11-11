@@ -159,7 +159,10 @@ PKGDIR="$\{PORTDIR\}/packages"
 DATAEOF
 
     # set localtime
-    chroot "$chroot" ln -sf "/usr/share/zoneinfo/$timezone" /etc/localtime
+    chroot "$chroot" /bin/bash <<DATAEOF
+echo "$timezone" > /etc/timezone
+emerge --config sys-libs/timezone-data
+DATAEOF
 
     # set locale
     chroot "$chroot" /bin/bash <<DATAEOF
@@ -174,6 +177,7 @@ DATAEOF
     # Ensure latest portage is installed and clear news
     chroot "$chroot" /bin/bash <<DATAEOF
 emerge --oneshot sys-apps/portage
+eselect news read
 DATAEOF
 }
 
