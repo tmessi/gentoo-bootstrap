@@ -12,10 +12,10 @@ stage3file=${stage3current##*/}
 chost="x86_64-pc-linux-gnu"
 
 # kernel version to use
-kernel_version="3.17.7"
+kernel_version="4.1.12"
 
 # timezone (as a subdirectory of /usr/share/zoneinfo)
-timezone="UTC"
+timezone="US/Eastern"
 
 # locale
 locale="en_US.utf8"
@@ -48,7 +48,7 @@ function base() {
     lvcreate -L2G  -n lvtmp  vgsys
     lvcreate -L2G  -n lvvar  vgsys
     lvcreate -L1G  -n lvsrv  vgsys
-    lvcreate -L50G -n lvhome vgsys
+    lvcreate -L20G -n lvhome vgsys
     lvcreate -L4G  -n lvswap vgsys
 
     # Setup swap
@@ -82,7 +82,7 @@ function base() {
     # Download and unpack stage3
     pushd "$chroot"
     wget -nv --tries=5 "$stage3url"
-    tar xpf "$stage3file" && rm "$stage3file"
+    tar xjpf "$stage3file" --xattrs && rm "$stage3file"
     popd
 
     # Copy nameserver information
@@ -144,6 +144,7 @@ CXXFLAGS="\${CFLAGS}"
 # Please consult http://www.gentoo.org/doc/en/change-chost.xml before changing.
 CHOST="$chost"
 MAKEOPTS="-j$((1 + $nr_cpus)) -l${nr_cpus}.5"
+GRUB_PLATFORMS="efi-64"
 
 EMERGE_DEFAULT_OPTS="--jobs --load-average=${nr_cpus}.5"
 
@@ -156,6 +157,8 @@ FEATURES="parallel-fetch parallel-install candy"
 PORTDIR="/usr/portage"
 DISTDIR="$\{PORTDIR\}/distfiles"
 PKGDIR="$\{PORTDIR\}/packages"
+
+GENTOO_MIRRORS="http://distfiles.gentoo.org http://www.ibiblio.org/pub/Linux/distributions/gentoo"
 DATAEOF
 
     # set localtime
@@ -228,8 +231,8 @@ source /etc/profile && \
 env-update && \
 grep -v rootfs /proc/mounts > /etc/mtab && \
 mkdir -p /boot/grub && \
-grub2-mkconfig -o /boot/grub/grub.cfg && \
-grub2-install --no-floppy /dev/sda
+grub2-install --target=x86_64-efi --efi-directory=/boot --no-floppy /dev/sda && \
+grub2-mkconfig -o /boot/grub/grub.cfg
 DATAEOF
 }
 
