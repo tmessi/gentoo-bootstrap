@@ -4,7 +4,7 @@ source /etc/profile
 # Settings
 build_arch="amd64"
 build_proc="amd64"
-stage3current=`curl -s http://distfiles.gentoo.org/releases/${build_arch}/autobuilds/latest-stage3-${build_proc}.txt|grep -v "^#"`
+stage3current=`curl -s http://distfiles.gentoo.org/releases/${build_arch}/autobuilds/latest-stage3-${build_proc}.txt|grep -v "^#"`|cut -f 1 -d ' '
 stage3url="http://distfiles.gentoo.org/releases/${build_arch}/autobuilds/${stage3current}"
 stage3file=${stage3current##*/}
 
