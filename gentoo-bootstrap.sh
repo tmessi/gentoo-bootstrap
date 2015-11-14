@@ -344,7 +344,7 @@ function _reset() {
     swapoff -L swap
 }
 
-OPTS=$(getopt -o wnrh --long wipe,hostname,iwl7260,reset,help -n "$name" -- "$@")
+OPTS=$(getopt -o wn:rh --long wipe,hostname:,iwl7260,reset,help -n "$name" -- "$@")
 if [[ $? != 0 ]]; then echo "option error" >&2; exit 1; fi
 
 eval set -- "$OPTS"
