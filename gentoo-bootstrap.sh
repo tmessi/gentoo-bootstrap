@@ -303,6 +303,26 @@ rm -rf /tmp/*
 rm -rf /var/log/*
 rm -rf /var/tmp/*
 DATAEOF
+
+    cat <<DATAEOF > "$chroot/recovery.sh"
+#!/bin/bash
+mount -L/boot "$chroot/boot"
+mount -L/opt  "$chroot/opt"
+mount -L/usr  "$chroot/usr"
+mount -L/tmp  "$chroot/tmp"
+mount -L/var  "$chroot/var"
+mount -L/srv  "$chroot/srv"
+mount -L/home "$chroot/home"
+cp -L /etc/resolv.conf "$chroot/etc/"
+mount -t proc none  "$chroot/proc"
+mount --rbind /sys  "$chroot/sys"
+mount --make-rslave "$chroot/sys"
+mount --rbind /dev  "$chroot/dev"
+mount --make-rslave "$chroot/dev"
+mount -t tmpfs -o size=4096M,uid=250,gid=250,mode=755,noatime none "$chroot/var/tmp/portage"
+chroot "$chroot" /bin/bash
+DATAEOF
+    chmod +x "$chroot/recovery.sh"
 }
 
 OPTS=$(getopt -o wnh --long wipe,hostname,iwl7260,help -n "$name" -- "$@")
