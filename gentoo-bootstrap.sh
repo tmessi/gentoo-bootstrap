@@ -247,7 +247,7 @@ wget https://raw.githubusercontent.com/shadowfax-chc/kernel-configs/master/confi
 make olddefconfig
 
 # build and install kernel, using the config created above
-make -j$(nr_cpus) bzImage modules && make modules_install && make install
+make -j${nr_cpus} bzImage modules && make modules_install && make install
 DATAEOF
 }
 
