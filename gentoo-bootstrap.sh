@@ -328,7 +328,23 @@ DATAEOF
     chmod +x "$chroot/recovery.sh"
 }
 
-OPTS=$(getopt -o wnh --long wipe,hostname,iwl7260,help -n "$name" -- "$@")
+function _reset() {
+    umount -l "$chroot/dev"
+    umount -l "$chroot/sys"
+    umount    "$chroot/var/tmp/portage"
+    umount    "$chroot/proc"
+    umount    "$chroot/home"
+    umount    "$chroot/srv"
+    umount    "$chroot/var"
+    umount    "$chroot/tmp"
+    umount    "$chroot/usr"
+    umount    "$chroot/opt"
+    umount    "$chroot/boot"
+    umount    "$chroot"
+    swapoff -L swap
+}
+
+OPTS=$(getopt -o wnrh --long wipe,hostname,iwl7260,reset,help -n "$name" -- "$@")
 if [[ $? != 0 ]]; then echo "option error" >&2; exit 1; fi
 
 eval set -- "$OPTS"
@@ -344,6 +360,9 @@ while true; do
         --iwl7260)
             iwl7260=1
             shift;;
+        -r|--reset)
+            _reset
+            exit 0;;
         -h|--help)
             print_help
             exit 0;;
