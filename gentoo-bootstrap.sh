@@ -46,12 +46,12 @@ optional args:
 
 function _wipe_old() {
     old_vgs=$(vgs | awk '!/VG/ {print $1}')
-    for old_vg in old_vgs; do
+    for old_vg in $old_vgs; do
         echo "Removing volume group $old_vg"
         vgremove -f $old_vg
     done
     old_pvs=$(pvs | awk '!/PV/ {print $1}')
-    for old_pv in old_pvs; do
+    for old_pv in $old_pvs; do
         echo "Removing physical volume $old_pv"
         pvremove -f $old_pv
     done
