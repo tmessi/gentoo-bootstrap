@@ -273,6 +273,7 @@ function additional_progs() {
     # install fs tools
     chroot "$chroot" /bin/bash <<DATAEOF
 emerge sys-fs/xfsprogs net-misc/wicd dev-vcs/git
+rc-update add lvm default
 DATAEOF
 }
 
