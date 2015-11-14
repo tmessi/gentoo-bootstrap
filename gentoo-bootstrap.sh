@@ -1,7 +1,13 @@
 #!/bin/bash
 source /etc/profile
 
+name=${0##*/}
+
+
 # Settings
+wipe_old=0
+hostname="felarof"
+iwl7260=0
 build_arch="amd64"
 build_proc="amd64"
 stage3current=`curl -s http://distfiles.gentoo.org/releases/${build_arch}/autobuilds/latest-stage3-${build_proc}.txt|grep -v "^#"|cut -f 1 -d ' '`
@@ -27,9 +33,34 @@ chroot=/mnt/gentoo
 nr_cpus=$(</proc/cpuinfo grep processor|wc -l)
 
 
-function base() {
+function print_help() {
+    echo "usage: $name [options]
+
+optional args:
+
+    -h|--help   print this help."
+}
+
+function _wipe_old() {
+    old_vgs=$(vgs | awk '!/VG/ {print $1}')
+    for old_vg in old_vgs; do
+        echo "Removing volume group $old_vg"
+        vgremove -f $old_vg
+    done
+    old_pvs=$(pvs | awk '!/PV/ {print $1}')
+    for old_pv in old_pvs; do
+        echo "Removing physical volume $old_pv"
+        pvremove -f $old_pv
+    done
+    echo "Wiping partition table"
     # destroys the existing MBR and GTP data
-    # sgdisk -Z /dev/sda
+    sgdisk -Z /dev/sda
+}
+
+function base() {
+    if [[ $wipe_old -eq 1 ]]; then
+        _wipe_old
+    fi
 
     # Partition the disk (http://www.rodsbooks.com/gdisk/sgdisk.html)
     sgdisk -n 1:0:+2M   -t 1:ef02 -c 1:"linux-bios" \
@@ -66,8 +97,8 @@ function base() {
     mkfs.xfs  -L/home /dev/mapper/vgsys-lvhome
 
     # Mount partitions
-    mount  -L/    "$chroot"
-    mkdir -p "$chroot"/{boot,opt,usr,tmp,var,srv,home}
+    mount -L/     "$chroot"
+    mkdir -p      "$chroot"/{boot,opt,usr,tmp,var,srv,home}
     mount -L/boot "$chroot/boot"
     mount -L/opt  "$chroot/opt"
     mount -L/usr  "$chroot/usr"
@@ -94,6 +125,7 @@ function base() {
     mount --make-rslave "$chroot/sys"
     mount --rbind /dev "$chroot/dev"
     mount --make-rslave "$chroot/dev"
+    mount -t tmpfs -o size=4096M,uid=250,gid=250,mode=755,noatime none "$chroot/var/tmp/portage"
 
     chroot "$chroot" env-update
 
@@ -155,16 +187,10 @@ LINGUAS="en"
 FEATURES="parallel-fetch parallel-install candy"
 
 PORTDIR="/usr/portage"
-DISTDIR="$\{PORTDIR\}/distfiles"
-PKGDIR="$\{PORTDIR\}/packages"
+DISTDIR="\${PORTDIR}/distfiles"
+PKGDIR="\${PORTDIR}/packages"
 
 GENTOO_MIRRORS="http://distfiles.gentoo.org http://www.ibiblio.org/pub/Linux/distributions/gentoo"
-DATAEOF
-
-    # set localtime
-    chroot "$chroot" /bin/bash <<DATAEOF
-echo "$timezone" > /etc/timezone
-emerge --config sys-libs/timezone-data
 DATAEOF
 
     # set locale
@@ -182,23 +208,43 @@ DATAEOF
 emerge --oneshot sys-apps/portage
 eselect news read
 DATAEOF
+
+    # set localtime
+    chroot "$chroot" /bin/bash <<DATAEOF
+echo "$timezone" > /etc/timezone
+emerge --config sys-libs/timezone-data
+DATAEOF
 }
 
 
+function _iwl7260_ucode() {
+    mkdir -p "$chroot/etc/portage/package.accept_keywords/sys-firmware"
+    cat <<DATAEOF > "$chroot/etc/portage/package.accept_keywords/sys-firmware/iwl7260-ucode"
+sys-firmware/iwl7260-ucode
+DATAEOF
+    chroot "$chroot" /bin/bash <<DATAEOF
+emerge sys-firmware/iwl7260-ucode
+DATAEOF
+}
+
 function kernel() {
     # Build the kernel
+    if [[ $iwl7260 -eq 1 ]]; then
+        _iwl7260_ucode
+    fi
     chroot "$chroot" /bin/bash <<DATAEOF
-USE="symlink -cryptsetup" emerge =sys-kernel/gentoo-sources-$kernel_version sys-kernel/genkernel gentoolkit
+git clone https://github.com/shadowfax-chc/initramfs-splash.git /usr/src/initramfs-splash
+cd /usr/src/initramfs-splash
+./install.sh
+USE="symlink -cryptsetup" emerge =sys-kernel/gentoo-sources-$kernel_version gentoolkit
 
 cd /usr/src/linux
 # use a default configuration as a starting point
-make defconfig
+wget https://raw.githubusercontent.com/shadowfax-chc/kernel-configs/master/config.$hostname -O /usr/src/linux/.config
+make olddefconfig
 
-# add settings for hardware
-cat <<EOF >>/usr/src/linux/.config
-EOF
 # build and install kernel, using the config created above
-genkernel --install --symlink --oldconfig --bootloader=grub all
+make -j$(nr_cpus) bzImage modules && make modules_install && make install
 DATAEOF
 }
 
@@ -220,6 +266,18 @@ rc-update add rsyslog default
 DATAEOF
 }
 
+function additional_progs() {
+    # install fs tools
+    chroot "$chroot" /bin/bash <<DATAEOF
+emerge sys-fs/xfsprogs net-misc/wicd dev-vcs/git
+DATAEOF
+}
+
+function set_hostname() {
+    cat <<DATAEOF > "$chroot/etc/conf.d/hostname"
+hostname="$hostname"
+DATAEOF
+}
 
 function grub() {
     # Install grub
@@ -237,14 +295,6 @@ DATAEOF
 }
 
 
-function salt() {
-    # Install salt via bootstrap
-    chroot "$chroot" /bin/bash <<DATAEOF
-wget -O - http://bootstrap.saltstack.org | sh
-DATAEOF
-}
-
-
 function cleanup() {
     # cleanup
     chroot "$chroot" /bin/bash <<DATAEOF
@@ -255,11 +305,37 @@ rm -rf /var/tmp/*
 DATAEOF
 }
 
+OPTS=$(getopt -o wnh --long wipe,hostname,iwl7260,help -n "$name" -- "$@")
+if [[ $? != 0 ]]; then echo "option error" >&2; exit 1; fi
+
+eval set -- "$OPTS"
+
+while true; do
+    case "$1" in
+        -n|--hostname)
+            hostname=$2
+            shift 2;;
+        -w|--wipe)
+            wipe_old=1
+            shift;;
+        --iwl7260)
+            iwl7260=1
+            shift;;
+        -h|--help)
+            print_help
+            exit 0;;
+        --)
+            shift; break;;
+        *)
+            echo "Internal error!"; exit;;
+    esac
+done
 
 base
-kernel
 cron
 syslog
+additional_progs
+kernel
+set_hostname
 grub
-salt
 cleanup
