@@ -38,7 +38,10 @@ function print_help() {
 
 optional args:
 
-    -h|--help   print this help."
+    -w|--wipe      erase old partitions
+    -n|--hostname  set hostname
+       --iwl7260   include iwl7260 ucode
+    -h|--help      print this help."
 }
 
 function _wipe_old() {
