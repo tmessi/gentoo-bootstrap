@@ -11,7 +11,7 @@ sgdisk -n 1:0:+2M   -t 1:ef02 -c 1:"linux-bios" \
        -p /dev/$device
 
 mkfs.vfat -ntboot  /dev/${device}2
-mkfs.xfs  -nthumby /dev/${device}3
+mkfs.xfs  -Lthumby /dev/${device}3
 
 mount -Ltboot /boot
 
