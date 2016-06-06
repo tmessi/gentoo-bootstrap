@@ -8,6 +8,9 @@ name=${0##*/}
 wipe_old=0
 hostname="felarof"
 iwl7260=0
+crypt=0
+crypt_key=""
+crypt_args=""
 build_arch="amd64"
 build_proc="amd64"
 stage3current=`curl -s http://distfiles.gentoo.org/releases/${build_arch}/autobuilds/latest-stage3-${build_proc}.txt|grep -v "^#"|cut -f 1 -d ' '`
@@ -41,6 +44,9 @@ optional args:
     -w|--wipe      erase old partitions
     -n|--hostname  set hostname
        --iwl7260   include iwl7260 ucode
+    -c|--crypt     encrypt lvm partition
+    --crypt-key    path to encrypt key
+    --crypt-args   args to pass to cryptsetup
     -h|--help      print this help."
 }
 
@@ -72,6 +78,15 @@ function base() {
            -p /dev/sda
 
     sleep 1
+
+    if [[ $crypt -eq 1 ]]; then
+        open_args=""
+        cryptsetup $crypt_args luksFormat /dev/sda3 $crypt_key
+        if [[ $crypt_key ]]; then
+            open_args="-d $crypt_key"
+        fi
+        cryptsetup luksOpen $open_args /dev/sda3 lvm
+    fi
 
     # Set up lvms
     pvcreate -y /dev/sda3
@@ -221,12 +236,12 @@ DATAEOF
 
 
 function _iwl7260_ucode() {
-    mkdir -p "$chroot/etc/portage/package.accept_keywords/sys-firmware"
-    cat <<DATAEOF > "$chroot/etc/portage/package.accept_keywords/sys-firmware/iwl7260-ucode"
-sys-firmware/iwl7260-ucode
+    mkdir -p "$chroot/etc/portage/package.accept_keywords/sys-kernel"
+    cat <<DATAEOF > "$chroot/etc/portage/package.accept_keywords/sys-kernel/linux-firmware"
+sys-kernel/linux-firmware
 DATAEOF
     chroot "$chroot" /bin/bash <<DATAEOF
-emerge sys-firmware/iwl7260-ucode
+emerge sys-kernel/linux-firmware
 DATAEOF
 }
 
@@ -236,8 +251,8 @@ function kernel() {
         _iwl7260_ucode
     fi
     chroot "$chroot" /bin/bash <<DATAEOF
-git clone https://github.com/shadowfax-chc/initramfs-splash.git /usr/src/initramfs-splash
-cd /usr/src/initramfs-splash
+git clone https://github.com/shadowfax-chc/initramfs.git /usr/src/initramfs
+cd /usr/src/initramfs
 ./install.sh
 USE="symlink -cryptsetup" emerge =sys-kernel/gentoo-sources-$kernel_version gentoolkit
 
@@ -345,7 +360,7 @@ function _reset() {
     swapoff -L swap
 }
 
-OPTS=$(getopt -o wn:rh --long wipe,hostname:,iwl7260,reset,help -n "$name" -- "$@")
+OPTS=$(getopt -o cwn:rh --long crypt,crypt-args:,crypt-key:,wipe,hostname:,iwl7260,reset,help -n "$name" -- "$@")
 if [[ $? != 0 ]]; then echo "option error" >&2; exit 1; fi
 
 eval set -- "$OPTS"
@@ -361,6 +376,17 @@ while true; do
         --iwl7260)
             iwl7260=1
             shift;;
+        -c|--crypt)
+            crypt=1
+            shift;;
+        --crypt-key)
+            crypt=1
+            crypt_key=$2
+            shift 2;;
+        --crypt-args)
+            crypt=1
+            crypt_args="$2"
+            shift 2;;
         -r|--reset)
             _reset
             exit 0;;
