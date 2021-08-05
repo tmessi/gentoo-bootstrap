@@ -11,6 +11,9 @@ iwl7260=0
 crypt=0
 crypt_key=""
 crypt_args=""
+crypt_boot=0
+crypt_boot_args=""
+crypt_boot_key=""
 build_arch="amd64"
 build_proc="amd64"
 stage3current=`curl -s http://distfiles.gentoo.org/releases/${build_arch}/autobuilds/latest-stage3-${build_proc}.txt|grep -v "^#"|cut -f 1 -d ' '`
@@ -19,9 +22,6 @@ stage3file=${stage3current##*/}
 
 # chost
 chost="x86_64-pc-linux-gnu"
-
-# kernel version to use
-kernel_version="4.1.12"
 
 # timezone (as a subdirectory of /usr/share/zoneinfo)
 timezone="US/Eastern"
@@ -41,13 +41,16 @@ function print_help() {
 
 optional args:
 
-    -w|--wipe      erase old partitions
-    -n|--hostname  set hostname
-       --iwl7260   include iwl7260 ucode
-    -c|--crypt     encrypt lvm partition
-    --crypt-key    path to encrypt key
-    --crypt-args   args to pass to cryptsetup
-    -h|--help      print this help."
+    -w|--wipe         erase old partitions
+    -n|--hostname     set hostname
+       --iwl7260      include iwl7260 ucode
+    -c|--crypt        encrypt lvm partition
+    --crypt-key       path to encrypt key
+    --crypt-args      args to pass to cryptsetup
+    --crypt-boot      encrypt boot partition
+    --crypt-boot-args args to pass to cryptsetup for boot
+    --crypt-boot-key  path to encrypt key
+    -h|--help         print this help."
 }
 
 function _wipe_old() {
@@ -63,7 +66,7 @@ function _wipe_old() {
     done
     echo "Wiping partition table"
     # destroys the existing MBR and GTP data
-    sgdisk -Z /dev/sda
+    sgdisk -Z /dev/nvme0n1
 }
 
 function base() {
@@ -73,57 +76,86 @@ function base() {
 
     # Partition the disk (http://www.rodsbooks.com/gdisk/sgdisk.html)
     sgdisk -n 1:0:+2M   -t 1:ef02 -c 1:"linux-bios" \
-           -n 2:0:+512M -t 2:ef00 -c 2:"linux-boot" \
-           -n 3:0:0     -t 3:8e00 -c 3:"linux-root" \
-           -p /dev/sda
+           -n 2:0:+512M -t 2:ef00 -c 2:"efi" \
+           -n 3:0:+1G   -t 3:8309 -c 3:"linux-boot" \
+           -n 4:0:0     -t 4:8e09 -c 3:"linux-root" \
+           -p /dev/nvme0n1
 
     sleep 1
 
+    rootpv=/dev/nvme0n1p4
+
     if [[ $crypt -eq 1 ]]; then
         open_args=""
-        cryptsetup $crypt_args luksFormat /dev/sda3 $crypt_key
+        cryptsetup $crypt_args luksFormat /dev/nvme0n1p4 $crypt_key
         if [[ $crypt_key ]]; then
-            open_args="-d $crypt_key"
+            open_args="--key-file $crypt_key"
         fi
-        cryptsetup luksOpen $open_args /dev/sda3 lvm
+        cryptsetup open $open_args /dev/nvme0n1p4 cryptlvm
+        rootpv=/dev/mapper/cryptlvm
+    fi
+
+    bootpart=/dev/nvme0n1p3
+    if [[ $crypt_boot -eq 1 ]]; then
+        open_args=""
+        cryptsetup $crypt_boot_args luksFormat --type luks1 /dev/nvme0n1p3 $crypt_boot_key
+        if [[ $crypt_boot_key ]]; then
+            open_args="--key-file $crypt_boot_key"
+        fi
+        cryptsetup open $open_args /dev/nvme0n1p3 cryptboot
+
+        pvcreate -y /dev/mapper/cryptboot
+        vgcreate vgboot /dev/mapper/cryptboot
+        lvcreate -L1G -n lvboot vgboot
+        bootpart=/dev/mapper/vgoot-lvboot
     fi
 
     # Set up lvms
-    pvcreate -y /dev/sda3
-    vgcreate vgsys /dev/sda3
-    lvcreate -L2G  -n lvroot vgsys
-    lvcreate -L5G  -n lvopt  vgsys
-    lvcreate -L20G -n lvusr  vgsys
-    lvcreate -L2G  -n lvtmp  vgsys
-    lvcreate -L2G  -n lvvar  vgsys
-    lvcreate -L1G  -n lvsrv  vgsys
-    lvcreate -L20G -n lvhome vgsys
-    lvcreate -L4G  -n lvswap vgsys
+    pvcreate -y ${rootpv}
+    vgcreate vgsys ${rootpv}
+
+    lvcreate -L2G  -n lvroot     vgsys
+    lvcreate -L5G  -n lvopt      vgsys
+    lvcreate -L10G -n lvusr      vgsys
+    lvcreate -L2G  -n lvtmp      vgsys
+    lvcreate -L2G  -n lvvar      vgsys
+    lvcreate -L1G  -n lvvardb    vgsys
+    lvcreate -L10G -n lvvarcache vgsys
+    lvcreate -L1G  -n lvsrv      vgsys
+    lvcreate -L20G -n lvhome     vgsys
+    lvcreate -L4G  -n lvswap     vgsys
 
     # Setup swap
     mkswap -L swap /dev/mapper/vgsys-lvswap
     swapon -L swap
 
     # Make file systems
-    mkfs.vfat -n/boot /dev/sda2
-    mkfs.xfs  -L/     /dev/mapper/vgsys-lvroot
-    mkfs.xfs  -L/opt  /dev/mapper/vgsys-lvopt
-    mkfs.xfs  -L/usr  /dev/mapper/vgsys-lvusr
-    mkfs.xfs  -L/tmp  /dev/mapper/vgsys-lvtmp
-    mkfs.xfs  -L/var  /dev/mapper/vgsys-lvvar
-    mkfs.xfs  -L/srv  /dev/mapper/vgsys-lvsrv
-    mkfs.xfs  -L/home /dev/mapper/vgsys-lvhome
+    mkfs.fat -n efi -F32   /dev/nvme0n1p2
+    mkfs.vfat -nboot       ${bootpart}
+    mkfs.xfs  -L/          /dev/mapper/vgsys-lvroot
+    mkfs.xfs  -L/opt       /dev/mapper/vgsys-lvopt
+    mkfs.xfs  -L/usr       /dev/mapper/vgsys-lvusr
+    mkfs.xfs  -L/tmp       /dev/mapper/vgsys-lvtmp
+    mkfs.xfs  -L/var       /dev/mapper/vgsys-lvvar
+    mkfs.xfs  -L/var/db    /dev/mapper/vgsys-lvvardb
+    mkfs.xfs  -L/var/cache /dev/mapper/vgsys-lvvarcache
+    mkfs.xfs  -L/srv       /dev/mapper/vgsys-lvsrv
+    mkfs.xfs  -L/home      /dev/mapper/vgsys-lvhome
 
     # Mount partitions
-    mount -L/     "$chroot"
-    mkdir -p      "$chroot"/{boot,opt,usr,tmp,var,srv,home}
-    mount -L/boot "$chroot/boot"
-    mount -L/opt  "$chroot/opt"
-    mount -L/usr  "$chroot/usr"
-    mount -L/tmp  "$chroot/tmp"
-    mount -L/var  "$chroot/var"
-    mount -L/srv  "$chroot/srv"
-    mount -L/home "$chroot/home"
+    mount -L/          "$chroot"
+    mkdir -p           "$chroot"/{efi,boot,opt,usr,tmp,var,srv,home}
+    mount -Lefi        "$chroot/efi"
+    mount -Lboot       "$chroot/boot"
+    mount -L/opt       "$chroot/opt"
+    mount -L/usr       "$chroot/usr"
+    mount -L/tmp       "$chroot/tmp"
+    mount -L/var       "$chroot/var"
+    mkdir -p           "$chroot/var/{db,cache}"
+    mount -L/var/db    "$chroot/var/db"
+    mount -L/var/cache "$chroot/var/cache"
+    mount -L/srv       "$chroot/srv"
+    mount -L/home      "$chroot/home"
 
     # Set proper perms for /tmp
     chmod 1777 "$chroot/tmp"
@@ -143,7 +175,7 @@ function base() {
     mount --make-rslave "$chroot/sys"
     mount --rbind /dev "$chroot/dev"
     mount --make-rslave "$chroot/dev"
-    mount -t tmpfs -o size=4096M,uid=250,gid=250,mode=755,noatime none "$chroot/var/tmp/portage"
+    mount -t tmpfs -o size=8G,uid=250,gid=250,mode=755,noatime none "$chroot/var/tmp/portage"
 
     chroot "$chroot" env-update
 
@@ -167,31 +199,30 @@ DATAEOF
 # See the manpage fstab(5) for more information.
 #
 
-# <fs>            <mountpoint>    <type>        <opts>            <dump/pass>
-LABEL=/boot       /boot            vfat         noatime            1 2
-LABEL=/           /                xfs          defaults           0 1
-LABEL=/opt        /opt             xfs          defaults           0 0
-LABEL=/usr        /usr             xfs          defaults           0 0
-LABEL=/tmp        /tmp             xfs          defaults,noatime   0 0
-LABEL=/var        /var             xfs          defaults,noatime   0 0
-LABEL=/srv        /srv             xfs          defaults           0 0
-LABEL=/home       /home            xfs          defaults           0 0
-LABEL=swap        none             swap         sw                 0 0
+#<fs>            <mountpoint>     <type> <opts>                                   <dump/pass>
+LABEL=boot       /boot            vfat   noatime                                  1 2
+LABEL=/          /                xfs    defaults                                 0 1
+LABEL=/opt       /opt             xfs    defaults                                 0 0
+LABEL=/usr       /usr             xfs    defaults                                 0 0
+LABEL=/tmp       /tmp             xfs    defaults,noatime                         0 0
+LABEL=/var       /var             xfs    defaults,noatime                         0 0
+LABEL=/var/db    /var/db          xfs    defaults,noatime                         0 0
+LABEL=/var/cache /var/cache       xfs    defaults,noatime                         0 0
+LABEL=/srv       /srv             xfs    defaults                                 0 0
+LABEL=/home      /home            xfs    defaults                                 0 0
+LABEL=swap       none             swap   sw                                       0 0
 
-none              /var/tmp/portage tmpfs        size=4096M,uid=250,gid=250,mode=755,noatime 0 0
+none             /var/tmp/portage tmpfs  size=8G,uid=250,gid=250,mode=755,noatime 0 0
 
 DATAEOF
 
     # Set makeconf
     cat <<DATAEOF > "$chroot/etc/portage/make.conf"
-# These settings were set by the catalyst build script that automatically
-# built this stage.
-# Please consult /usr/share/portage/config/make.conf.example for a more
-# detailed example.
 CFLAGS="-march=native -O2 -pipe"
-CXXFLAGS="\${CFLAGS}"
-# WARNING: Changing your CHOST is not something that should be done lightly.
-# Please consult http://www.gentoo.org/doc/en/change-chost.xml before changing.
+CFLAGS="\${COMMON_FLAGS}"
+CXXFLAGS="\${COMMON_FLAGS}"
+FCFLAGS="\${COMMON_FLAGS}"
+FFLAGS="\${COMMON_FLAGS}"
 CHOST="$chost"
 MAKEOPTS="-j$((1 + $nr_cpus)) -l${nr_cpus}.5"
 GRUB_PLATFORMS="efi-64"
@@ -201,14 +232,23 @@ EMERGE_DEFAULT_OPTS="--jobs --load-average=${nr_cpus}.5"
 INPUT_DEVICES="evdev"
 VIDEO_CARDS="nouveau nvidia"
 LINGUAS="en"
+ACCEPT_LICENSE="-* @BINARY-REDISTRIBUTABLE"
 
 FEATURES="parallel-fetch parallel-install candy"
 
-PORTDIR="/usr/portage"
-DISTDIR="\${PORTDIR}/distfiles"
-PKGDIR="\${PORTDIR}/packages"
+PORTDIR="/var/db/repos/gentoo"
+DISTDIR="/var/cache/distfiles"
+PKGDIR="/var/cache/binpkgs"
 
 GENTOO_MIRRORS="http://distfiles.gentoo.org http://www.ibiblio.org/pub/Linux/distributions/gentoo"
+
+PORTAGE_ELOG_CLASSES="info qa warn log error"
+PORTAGE_ELOG_SYSTEM="save echo:qa,error"
+PORTAGE_NICENESS="10"
+
+PYTHON_TARGETS="python3_9"
+PYTHON_SINGLE_TARGET="python3_9"
+LC_MESSAGES=C
 DATAEOF
 
     # set locale
@@ -216,6 +256,11 @@ DATAEOF
 locale-gen
 eselect locale set $locale
 env-update && source /etc/profile
+DATAEOF
+
+    chroot "$chroot" /bin/bash <<DATAEOF
+mkdir -p /etc/portage/repos.conf
+cp /usr/share/portage/config/repos.conf /etc/portage/repos.conf/gentoo.conf
 DATAEOF
 
     # Update portage tree to most current state
@@ -251,14 +296,14 @@ function kernel() {
         _iwl7260_ucode
     fi
     chroot "$chroot" /bin/bash <<DATAEOF
-git clone https://github.com/shadowfax-chc/initramfs.git /usr/src/initramfs
+git clone https://github.com/tmessi/initramfs.git /usr/src/initramfs
 cd /usr/src/initramfs
 ./install.sh
-USE="symlink -cryptsetup" emerge =sys-kernel/gentoo-sources-$kernel_version gentoolkit
+USE="symlink" emerge sys-kernel/gentoo-sources gentoolkit
 
 cd /usr/src/linux
 # use a default configuration as a starting point
-wget https://raw.githubusercontent.com/shadowfax-chc/kernel-configs/master/config.$hostname -O /usr/src/linux/.config
+wget https://raw.githubusercontent.com/tmessi/kernel-configs/master/config.$hostname -O /usr/src/linux/.config
 make olddefconfig
 
 # build and install kernel, using the config created above
@@ -287,8 +332,9 @@ DATAEOF
 function additional_progs() {
     # install fs tools
     chroot "$chroot" /bin/bash <<DATAEOF
-emerge sys-fs/xfsprogs net-misc/wicd dev-vcs/git
+emerge sys-fs/xfsprogs net-misc/connman dev-vcs/git sys-fs/lvm2
 rc-update add lvm boot
+rc-update add connman default
 DATAEOF
 }
 
@@ -300,7 +346,7 @@ DATAEOF
 
 function grub() {
     # Install grub
-    chroot "$chroot" emerge sys-boot/grub:2
+    chroot "$chroot" emerge sys-boot/grub
 
     # Make the disk bootable
     chroot "$chroot" /bin/bash <<DATAEOF
@@ -308,8 +354,8 @@ source /etc/profile && \
 env-update && \
 grep -v rootfs /proc/mounts > /etc/mtab && \
 mkdir -p /boot/grub && \
-grub2-install --target=x86_64-efi --efi-directory=/boot --no-floppy /dev/sda && \
-grub2-mkconfig -o /boot/grub/grub.cfg
+grub-install --target=x86_64-efi --efi-directory=/efi --no-floppy /dev/sda && \
+grub-mkconfig -o /boot/grub/grub.cfg
 DATAEOF
 }
 
@@ -325,6 +371,16 @@ DATAEOF
 
     cat <<DATAEOF > "$chroot/recovery.sh"
 #!/bin/bash
+DATAEOF
+
+    if [[ $crypt_boot -eq 1 ]]; then
+        cryptsetup open /dev/nvme0n1p3 cryptboot
+    fi
+    if [[ $crypt -eq 1 ]]; then
+        cryptsetup open /dev/nvme0n1p4 cryptlvm
+    fi
+
+    cat <<DATAEOF >> "$chroot/recovery.sh"
 mount -L/boot "$chroot/boot"
 mount -L/opt  "$chroot/opt"
 mount -L/usr  "$chroot/usr"
@@ -360,7 +416,7 @@ function _reset() {
     swapoff -L swap
 }
 
-OPTS=$(getopt -o cwn:rh --long crypt,crypt-args:,crypt-key:,wipe,hostname:,iwl7260,reset,help -n "$name" -- "$@")
+OPTS=$(getopt -o cwn:rh --long crypt-boot,crypt-boot-args:,crypt-boot-key:,crypt,crypt-args:,crypt-key:,wipe,hostname:,iwl7260,reset,help -n "$name" -- "$@")
 if [[ $? != 0 ]]; then echo "option error" >&2; exit 1; fi
 
 eval set -- "$OPTS"
@@ -386,6 +442,17 @@ while true; do
         --crypt-args)
             crypt=1
             crypt_args="$2"
+            shift 2;;
+        --crypt-boot)
+            crypt_boot=1
+            shift;;
+        --crypt-boot-key)
+            crypt=1
+            crypt_boot_key=$2
+            shift 2;;
+        --crypt-boot-args)
+            crypt=1
+            crypt_boot_args="$2"
             shift 2;;
         -r|--reset)
             _reset
