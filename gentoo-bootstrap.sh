@@ -16,8 +16,8 @@ crypt_boot_args=""
 crypt_boot_key=""
 build_arch="amd64"
 build_proc="amd64"
-stage3current=`curl -s http://distfiles.gentoo.org/releases/${build_arch}/autobuilds/latest-stage3-${build_proc}.txt|grep -v "^#"|cut -f 1 -d ' '`
-stage3url="http://distfiles.gentoo.org/releases/${build_arch}/autobuilds/${stage3current}"
+stage3current=`curl -s -L https://bouncer.gentoo.org/fetch/root/all/releases/${build_arch}/autobuilds/latest-stage3-${build_proc}-openrc.txt | grep -v "^#" | cut -f 1 -d ' '`
+stage3url="https://bouncer.gentoo.org/fetch/root/all/releases/${build_arch}/autobuilds/${stage3current}"
 stage3file=${stage3current##*/}
 
 # chost
@@ -151,7 +151,7 @@ function base() {
     mount -L/usr       "$chroot/usr"
     mount -L/tmp       "$chroot/tmp"
     mount -L/var       "$chroot/var"
-    mkdir -p           "$chroot/var/{db,cache}"
+    mkdir -p           "$chroot/var"/{db,cache}
     mount -L/var/db    "$chroot/var/db"
     mount -L/var/cache "$chroot/var/cache"
     mount -L/srv       "$chroot/srv"
@@ -163,7 +163,7 @@ function base() {
     # Download and unpack stage3
     pushd "$chroot"
     wget -nv --tries=5 "$stage3url"
-    tar xjpf "$stage3file" --xattrs && rm "$stage3file"
+    tar xpvf "$stage3file" --xattrs-include='*.*' --numeric-owner && rm "$stage3file"
     popd
 
     # Copy nameserver information
@@ -374,10 +374,14 @@ DATAEOF
 DATAEOF
 
     if [[ $crypt_boot -eq 1 ]]; then
-        cryptsetup open /dev/nvme0n1p3 cryptboot
+        cat <<DATAEOF >> "$chroot/recovery.sh"
+cryptsetup open /dev/nvme0n1p3 cryptboot
+DATAEOF
     fi
     if [[ $crypt -eq 1 ]]; then
-        cryptsetup open /dev/nvme0n1p4 cryptlvm
+        cat <<DATAEOF >> "$chroot/recovery.sh"
+cryptsetup open /dev/nvme0n1p4 cryptlvm
+DATAEOF
     fi
 
     cat <<DATAEOF >> "$chroot/recovery.sh"
@@ -403,6 +407,8 @@ DATAEOF
 function _reset() {
     umount -l "$chroot/dev"
     umount -l "$chroot/sys"
+    umount    "$chroot/var/db"
+    umount    "$chroot/var/cache"
     umount    "$chroot/var/tmp/portage"
     umount    "$chroot/proc"
     umount    "$chroot/home"
@@ -412,6 +418,7 @@ function _reset() {
     umount    "$chroot/usr"
     umount    "$chroot/opt"
     umount    "$chroot/boot"
+    umount    "$chroot/efi"
     umount    "$chroot"
     swapoff -L swap
 }
