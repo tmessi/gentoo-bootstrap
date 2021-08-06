@@ -67,6 +67,7 @@ function _wipe_old() {
     echo "Wiping partition table"
     # destroys the existing MBR and GTP data
     sgdisk -Z /dev/nvme0n1
+    partprobe
 }
 
 function base() {
@@ -106,8 +107,8 @@ function base() {
 
         pvcreate -y /dev/mapper/cryptboot
         vgcreate vgboot /dev/mapper/cryptboot
-        lvcreate -L1G -n lvboot vgboot
-        bootpart=/dev/mapper/vgoot-lvboot
+        lvcreate -L1020M -n lvboot vgboot
+        bootpart=/dev/mapper/vgboot-lvboot
     fi
 
     # Set up lvms
@@ -119,7 +120,7 @@ function base() {
     lvcreate -L10G -n lvusr      vgsys
     lvcreate -L2G  -n lvtmp      vgsys
     lvcreate -L2G  -n lvvar      vgsys
-    lvcreate -L1G  -n lvvardb    vgsys
+    lvcreate -L2G  -n lvvardb    vgsys
     lvcreate -L10G -n lvvarcache vgsys
     lvcreate -L1G  -n lvsrv      vgsys
     lvcreate -L20G -n lvhome     vgsys
@@ -132,15 +133,15 @@ function base() {
     # Make file systems
     mkfs.fat -n efi -F32   /dev/nvme0n1p2
     mkfs.vfat -nboot       ${bootpart}
-    mkfs.xfs  -L/          /dev/mapper/vgsys-lvroot
-    mkfs.xfs  -L/opt       /dev/mapper/vgsys-lvopt
-    mkfs.xfs  -L/usr       /dev/mapper/vgsys-lvusr
-    mkfs.xfs  -L/tmp       /dev/mapper/vgsys-lvtmp
-    mkfs.xfs  -L/var       /dev/mapper/vgsys-lvvar
-    mkfs.xfs  -L/var/db    /dev/mapper/vgsys-lvvardb
-    mkfs.xfs  -L/var/cache /dev/mapper/vgsys-lvvarcache
-    mkfs.xfs  -L/srv       /dev/mapper/vgsys-lvsrv
-    mkfs.xfs  -L/home      /dev/mapper/vgsys-lvhome
+    mkfs.xfs  -f -L/          /dev/mapper/vgsys-lvroot
+    mkfs.xfs  -f -L/opt       /dev/mapper/vgsys-lvopt
+    mkfs.xfs  -f -L/usr       /dev/mapper/vgsys-lvusr
+    mkfs.xfs  -f -L/tmp       /dev/mapper/vgsys-lvtmp
+    mkfs.xfs  -f -L/var       /dev/mapper/vgsys-lvvar
+    mkfs.xfs  -f -L/var/db    /dev/mapper/vgsys-lvvardb
+    mkfs.xfs  -f -L/var/cache /dev/mapper/vgsys-lvvarcache
+    mkfs.xfs  -f -L/srv       /dev/mapper/vgsys-lvsrv
+    mkfs.xfs  -f -L/home      /dev/mapper/vgsys-lvhome
 
     # Mount partitions
     mount -L/          "$chroot"
